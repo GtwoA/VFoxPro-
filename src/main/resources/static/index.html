@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Отчёт по начислениям</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        body {
+            font-family: -apple-system, Segoe UI, Arial, sans-serif;
+            max-width: 960px;
+            margin: 30px auto;
+            padding: 0 16px;
+            color: #222;
+        }
+        h1 { font-size: 20px; margin-bottom: 4px; }
+        .sub { color: #666; margin-bottom: 24px; font-size: 14px; }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field label { font-size: 13px; color: #555; }
+        .field input, .field select {
+            padding: 8px 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        button {
+            padding: 9px 18px;
+            border: none;
+            border-radius: 6px;
+            background: #2563eb;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button:hover { background: #1d4ed8; }
+        button.secondary {
+            background: #f3f4f6;
+            color: #111;
+            border: 1px solid #ccc;
+        }
+        button.secondary:hover { background: #e5e7eb; }
+
+        #status { font-size: 13px; color: #666; margin-bottom: 12px; min-height: 18px; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 16px;
+            font-size: 14px;
+        }
+        th, td {
+            text-align: left;
+            padding: 8px 10px;
+            border-bottom: 1px solid #eee;
+        }
+        th { background: #fafafa; font-weight: 600; }
+        td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        #chartWrap { max-width: 100%; margin-top: 24px; }
+        #summary { margin-top: 8px; font-size: 14px; color: #333; }
+    </style>
+</head>
+<body>
+
+<h1>Отчёт по начислениям сотрудников</h1>
+<div class="sub">Выберите школу или населённый пункт и год — построится таблица и график по сумме начислений за год, по ФИО от А до Я.</div>
+
+<div class="form-row">
+    <div class="field">
+        <label>Тип поиска</label>
+        <select id="mode">
+            <option value="school">По точному номеру школы (NOM_SCOL)</option>
+            <option value="locality">По названию/населённому пункту (например, Никитин)</option>
+        </select>
+    </div>
+    <div class="field">
+        <label id="valueLabel">Номер школы</label>
+        <input id="value" type="text" placeholder="006" />
+    </div>
+    <div class="field">
+        <label>Год</label>
+        <input id="year" type="number" value="2024" style="width:90px" />
+    </div>
+    <button onclick="loadReport()">Построить отчёт</button>
+    <button class="secondary" onclick="downloadXlsx()">Скачать Excel</button>
+</div>
+
+<div id="status"></div>
+<div id="summary"></div>
+
+<div id="chartWrap">
+    <canvas id="chart" height="90"></canvas>
+</div>
+
+<table id="resultTable" style="display:none">
+    <thead>
+    <tr>
+        <th>ФИО</th>
+        <th>Должность</th>
+        <th>Таб. номер</th>
+        <th class="num">Сумма начислений</th>
+    </tr>
+    </thead>
+    <tbody id="resultBody"></tbody>
+</table>
+
+<script>
+    let chartInstance = null;
+
+    document.getElementById('mode').addEventListener('change', (e) => {
+        const label = document.getElementById('valueLabel');
+        const input = document.getElementById('value');
+        if (e.target.value === 'locality') {
+            label.textContent = 'Ключевое слово в названии';
+            input.placeholder = 'Никитин';
+        } else {
+            label.textContent = 'Номер школы';
+            input.placeholder = '006';
+        }
+    });
+
+    function currentParams() {
+        const mode = document.getElementById('mode').value;
+        const value = document.getElementById('value').value.trim();
+        const year = document.getElementById('year').value.trim();
+        return { mode, value, year };
+    }
+
+    async function loadReport() {
+        const { mode, value, year } = currentParams();
+        const status = document.getElementById('status');
+        const table = document.getElementById('resultTable');
+        const body = document.getElementById('resultBody');
+        const summary = document.getElementById('summary');
+
+        if (!value || !year) {
+            status.textContent = 'Заполните поле поиска и год.';
+            return;
+        }
+
+        status.textContent = 'Загрузка...';
+        table.style.display = 'none';
+        body.innerHTML = '';
+        summary.textContent = '';
+
+        try {
+            const url = `/api/report/data?mode=${encodeURIComponent(mode)}&value=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`;
+            const res = await fetch(url);
+            if (!res.ok) {
+                throw new Error('Сервер вернул ошибку ' + res.status);
+            }
+            const rows = await res.json();
+
+            if (rows.length === 0) {
+                status.textContent = 'Ничего не найдено по этому запросу.';
+                renderChart([]);
+                return;
+            }
+
+            status.textContent = `Найдено сотрудников: ${rows.length}`;
+            const total = rows.reduce((s, r) => s + (r.totalAccrued || 0), 0);
+            summary.textContent = `Сумма начислений за ${year} год по всем найденным сотрудникам: ${total.toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽`;
+
+            for (const r of rows) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+          <td>${escapeHtml(r.fio || '')}</td>
+          <td>${escapeHtml(r.naimDol || '')}</td>
+          <td>${escapeHtml(r.tabNom || '')}</td>
+          <td class="num">${(r.totalAccrued || 0).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+        `;
+                body.appendChild(tr);
+            }
+            table.style.display = '';
+
+            renderChart(rows);
+        } catch (err) {
+            status.textContent = 'Ошибка: ' + err.message;
+            renderChart([]);
+        }
+    }
+
+    function renderChart(rows) {
+        const ctx = document.getElementById('chart').getContext('2d');
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+        if (rows.length === 0) {
+            return;
+        }
+        // если сотрудников много — показываем top-20 по сумме, чтобы график оставался читаемым
+        const sorted = [...rows].sort((a, b) => (b.totalAccrued || 0) - (a.totalAccrued || 0));
+        const top = sorted.slice(0, 20);
+
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: top.map(r => r.fio),
+                datasets: [{
+                    label: 'Сумма начислений',
+                    data: top.map(r => r.totalAccrued || 0),
+                    backgroundColor: '#2563eb'
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { autoSkip: false, maxRotation: 60, minRotation: 30, font: { size: 10 } } },
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+    }
+
+    function downloadXlsx() {
+        const { mode, value, year } = currentParams();
+        if (!value || !year) {
+            document.getElementById('status').textContent = 'Заполните поле поиска и год.';
+            return;
+        }
+        const url = mode === 'locality'
+            ? `/api/report/by-locality?keyword=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`
+            : `/api/report?nomScol=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`;
+        window.location.href = url;
+    }
+
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+</script>
+
+</body>
+</html>

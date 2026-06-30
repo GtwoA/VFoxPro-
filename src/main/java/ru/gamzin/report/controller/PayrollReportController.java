@@ -21,6 +21,22 @@ public class PayrollReportController {
     }
 
     /**
+     * JSON-данные отчёта для фронтенда (таблица + график), без скачивания файла.
+     * mode=school -> точный номер школы, mode=locality -> поиск по ключевому слову.
+     * Пример: GET /api/report/data?mode=school&value=006&year=2024
+     *         GET /api/report/data?mode=locality&value=Никитин&year=2024
+     */
+    @GetMapping("/api/report/data")
+    public List<PayrollReportService.ReportRow> reportData(@RequestParam String mode,
+                                                           @RequestParam String value,
+                                                           @RequestParam int year) {
+        if ("locality".equalsIgnoreCase(mode)) {
+            return reportService.buildReportByLocality(value, year);
+        }
+        return reportService.buildReportBySchoolNumber(value, year);
+    }
+
+    /**
      * Пример: GET /api/report?nomScol=006&year=2024
      * Отчёт по точному номеру школы.
      */
