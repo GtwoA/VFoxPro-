@@ -9,6 +9,7 @@ import ru.gamzin.report.repository.SScolRepository;
 
 import java.math.BigDecimal;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -36,12 +37,32 @@ public class PayrollReportService {
         public final String naimDol;
         public final String tabNom;
         public final BigDecimal totalAccrued;
+        public final Map<Integer, BigDecimal> monthly;
 
-        public ReportRow(String fio, String naimDol, String tabNom, BigDecimal totalAccrued) {
+        public ReportRow(String fio, String naimDol, String tabNom,
+                         BigDecimal totalAccrued, Map<Integer, BigDecimal> monthly) {
             this.fio = fio;
             this.naimDol = naimDol;
             this.tabNom = tabNom;
             this.totalAccrued = totalAccrued;
+            this.monthly = monthly;
+        }
+
+        static Map<Integer, BigDecimal> emptyMonths() {
+            Map<Integer, BigDecimal> m = new HashMap<>();
+            for (int i = 1; i <= 12; i++) {
+                m.put(i, BigDecimal.ZERO);
+            }
+            return m;
+        }
+
+        ReportRow mergedWith(ReportRow other) {
+            Map<Integer, BigDecimal> mergedMonthly = new HashMap<>(this.monthly);
+            for (Map.Entry<Integer, BigDecimal> e : other.monthly.entrySet()) {
+                mergedMonthly.merge(e.getKey(), e.getValue(), BigDecimal::add);
+            }
+            return new ReportRow(this.fio, this.naimDol, this.tabNom,
+                    this.totalAccrued.add(other.totalAccrued), mergedMonthly);
         }
     }
 
@@ -86,14 +107,24 @@ public class PayrollReportService {
                         RvRepository.TabNomTotal::getTabNom,
                         RvRepository.TabNomTotal::getTotal));
 
+        Map<String, Map<Integer, BigDecimal>> monthlyByTabNom = new HashMap<>();
+        for (RvRepository.TabNomMonthTotal row : rvRepository.sumAccrualsByTabNomMonthAndYear(tabNoms, year)) {
+            if (row.getMes() == null) {
+                continue;
+            }
+            monthlyByTabNom
+                    .computeIfAbsent(row.getTabNom(), k -> new HashMap<>())
+                    .put(row.getMes(), row.getTotal());
+        }
+
         Map<String, ReportRow> byFio = new java.util.TreeMap<>();
         for (SRab e : employees) {
             BigDecimal sum = totalsByTabNom.getOrDefault(e.getTabNom(), BigDecimal.ZERO);
-            byFio.merge(e.getFio(),
-                    new ReportRow(e.getFio(), e.getNaimDol(), e.getTabNom(), sum),
-                    (oldRow, newRow) -> new ReportRow(
-                            oldRow.fio, oldRow.naimDol, oldRow.tabNom,
-                            oldRow.totalAccrued.add(newRow.totalAccrued)));
+            Map<Integer, BigDecimal> months = ReportRow.emptyMonths();
+            months.putAll(monthlyByTabNom.getOrDefault(e.getTabNom(), Map.of()));
+
+            ReportRow row = new ReportRow(e.getFio(), e.getNaimDol(), e.getTabNom(), sum, months);
+            byFio.merge(e.getFio(), row, ReportRow::mergedWith);
         }
 
         return List.copyOf(byFio.values());

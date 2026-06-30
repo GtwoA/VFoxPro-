@@ -7,7 +7,7 @@
     <style>
         body {
             font-family: -apple-system, Segoe UI, Arial, sans-serif;
-            max-width: 960px;
+            max-width: 1180px;
             margin: 30px auto;
             padding: 0 16px;
             color: #222;
@@ -50,28 +50,43 @@
 
         #status { font-size: 13px; color: #666; margin-bottom: 12px; min-height: 18px; }
 
+        .table-wrap { overflow-x: auto; }
         table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 16px;
-            font-size: 14px;
+            font-size: 13px;
+            white-space: nowrap;
         }
         th, td {
             text-align: left;
-            padding: 8px 10px;
+            padding: 6px 8px;
             border-bottom: 1px solid #eee;
         }
-        th { background: #fafafa; font-weight: 600; }
-        td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        th { background: #fafafa; font-weight: 600; position: sticky; top: 0; }
+        td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+        td.total, th.total { font-weight: 600; background: #f8fafc; }
 
         #chartWrap { max-width: 100%; margin-top: 24px; }
         #summary { margin-top: 8px; font-size: 14px; color: #333; }
+
+        .tabs { display: flex; gap: 8px; margin-top: 28px; margin-bottom: 8px; }
+        .tab-btn {
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            background: #f3f4f6;
+            color: #111;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .tab-btn.active { background: #2563eb; color: white; border-color: #2563eb; }
     </style>
 </head>
 <body>
 
 <h1>Отчёт по начислениям сотрудников</h1>
-<div class="sub">Выберите школу, организацию (группу кодов) или название для поиска и год — построится таблица и график по сумме начислений за год, по ФИО от А до Я.</div>
+<div class="sub">Выберите школу, организацию (группу кодов) или название для поиска и год — построится таблица и график по сумме начислений за год, по ФИО от А до Я, с разбивкой по месяцам.</div>
 
 <div class="form-row">
     <div class="field">
@@ -106,24 +121,36 @@
 <div id="status"></div>
 <div id="summary"></div>
 
+<div class="tabs">
+    <button class="tab-btn active" id="tabMonthly" onclick="showChart('monthly')">По месяцам (всего)</button>
+    <button class="tab-btn" id="tabByEmployee" onclick="showChart('byEmployee')">Топ-20 сотрудников</button>
+</div>
+
 <div id="chartWrap">
     <canvas id="chart" height="90"></canvas>
 </div>
 
-<table id="resultTable" style="display:none">
-    <thead>
-    <tr>
-        <th>ФИО</th>
-        <th>Должность</th>
-        <th>Таб. номер</th>
-        <th class="num">Сумма начислений</th>
-    </tr>
-    </thead>
-    <tbody id="resultBody"></tbody>
-</table>
+<div class="table-wrap">
+    <table id="resultTable" style="display:none">
+        <thead>
+        <tr id="resultHeaderRow">
+            <th>ФИО</th>
+            <th>Должность</th>
+            <th>Таб. номер</th>
+            <!-- месяцы добавляются скриптом -->
+            <th class="num total">Итого за год</th>
+        </tr>
+        </thead>
+        <tbody id="resultBody"></tbody>
+    </table>
+</div>
 
 <script>
     let chartInstance = null;
+    let lastRows = [];
+    let lastYear = 2024;
+    let activeChart = 'monthly';
+    const MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
 
     // подгружаем список организаций (locality_group) для выпадающего списка
     async function loadLocalities() {
@@ -170,7 +197,6 @@
             }
         }
     });
-    // изначально показываем выпадающий список организаций
     document.getElementById('mode').dispatchEvent(new Event('change'));
 
     function currentParams() {
@@ -206,45 +232,107 @@
                 throw new Error('Сервер вернул ошибку ' + res.status);
             }
             const rows = await res.json();
+            lastRows = rows;
+            lastYear = year;
 
             if (rows.length === 0) {
                 status.textContent = 'Ничего не найдено по этому запросу.';
-                renderChart([]);
+                renderActiveChart();
                 return;
             }
 
             status.textContent = `Найдено сотрудников: ${rows.length}`;
             const total = rows.reduce((s, r) => s + (r.totalAccrued || 0), 0);
-            summary.textContent = `Сумма начислений за ${year} год по всем найденным сотрудникам: ${total.toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽`;
+            summary.textContent = `Сумма начислений за ${year} год по всем найденным сотрудникам: ${fmt(total)} ₽`;
 
+            buildTableHeader();
             for (const r of rows) {
                 const tr = document.createElement('tr');
-                tr.innerHTML = `
+                let cells = `
           <td>${escapeHtml(r.fio || '')}</td>
           <td>${escapeHtml(r.naimDol || '')}</td>
           <td>${escapeHtml(r.tabNom || '')}</td>
-          <td class="num">${(r.totalAccrued || 0).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
         `;
+                for (let m = 1; m <= 12; m++) {
+                    const v = (r.monthly && r.monthly[m]) || 0;
+                    cells += `<td class="num">${fmt(v)}</td>`;
+                }
+                cells += `<td class="num total">${fmt(r.totalAccrued || 0)}</td>`;
+                tr.innerHTML = cells;
                 body.appendChild(tr);
             }
             table.style.display = '';
 
-            renderChart(rows);
+            renderActiveChart();
         } catch (err) {
             status.textContent = 'Ошибка: ' + err.message;
-            renderChart([]);
+            renderActiveChart();
         }
     }
 
-    function renderChart(rows) {
+    function buildTableHeader() {
+        const headerRow = document.getElementById('resultHeaderRow');
+        headerRow.innerHTML = '<th>ФИО</th><th>Должность</th><th>Таб. номер</th>';
+        for (const name of MONTH_NAMES) {
+            headerRow.innerHTML += `<th class="num">${name}</th>`;
+        }
+        headerRow.innerHTML += '<th class="num total">Итого за год</th>';
+    }
+
+    function fmt(v) {
+        return v.toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2});
+    }
+
+    function showChart(which) {
+        activeChart = which;
+        document.getElementById('tabMonthly').classList.toggle('active', which === 'monthly');
+        document.getElementById('tabByEmployee').classList.toggle('active', which === 'byEmployee');
+        renderActiveChart();
+    }
+
+    function renderActiveChart() {
+        if (activeChart === 'monthly') {
+            renderMonthlyChart(lastRows);
+        } else {
+            renderByEmployeeChart(lastRows);
+        }
+    }
+
+    function renderMonthlyChart(rows) {
         const ctx = document.getElementById('chart').getContext('2d');
-        if (chartInstance) {
-            chartInstance.destroy();
+        if (chartInstance) chartInstance.destroy();
+        if (rows.length === 0) return;
+
+        const totalsByMonth = new Array(12).fill(0);
+        for (const r of rows) {
+            for (let m = 1; m <= 12; m++) {
+                totalsByMonth[m - 1] += (r.monthly && r.monthly[m]) || 0;
+            }
         }
-        if (rows.length === 0) {
-            return;
-        }
-        // если сотрудников много — показываем top-20 по сумме, чтобы график оставался читаемым
+
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: MONTH_NAMES,
+                datasets: [{
+                    label: `Сумма начислений по всем сотрудникам, ${lastYear}`,
+                    data: totalsByMonth,
+                    backgroundColor: '#2563eb'
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+    }
+
+    function renderByEmployeeChart(rows) {
+        const ctx = document.getElementById('chart').getContext('2d');
+        if (chartInstance) chartInstance.destroy();
+        if (rows.length === 0) return;
+
         const sorted = [...rows].sort((a, b) => (b.totalAccrued || 0) - (a.totalAccrued || 0));
         const top = sorted.slice(0, 20);
 
@@ -253,7 +341,7 @@
             data: {
                 labels: top.map(r => r.fio),
                 datasets: [{
-                    label: 'Сумма начислений',
+                    label: 'Сумма начислений за год',
                     data: top.map(r => r.totalAccrued || 0),
                     backgroundColor: '#2563eb'
                 }]
