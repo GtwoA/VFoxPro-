@@ -9,9 +9,6 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public interface RvRepository extends JpaRepository<Rv, Long> {
-
-    // KOD_TIP = '1' в KOD_RAS — денежные начисления (оклад, категория и т.п.),
-    // KOD_TIP = '0' — нерабочие/учётные показатели (дни), их в отчёт начислений не включаем.
     @Query("SELECT r.tabNom AS tabNom, COALESCE(SUM(r.inform), 0) AS total " +
             "FROM Rv r " +
             "WHERE r.tabNom IN :tabNoms AND r.god = :year AND r.kodTip = '1' " +

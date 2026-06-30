@@ -10,7 +10,5 @@ public interface KodRasRepository extends JpaRepository<KodRas, Long> {
 
     Optional<KodRas> findByKodTipAndKodInf(String kodTip, String kodInf);
 
-    // все денежные виды начислений (kod_tip = '1') — пригодится, например,
-    // чтобы показать в UI/отчёте расшифровку видов начислений, а не просто сумму
     List<KodRas> findByKodTip(String kodTip);
 }

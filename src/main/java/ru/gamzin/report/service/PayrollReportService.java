@@ -2,6 +2,7 @@ package ru.gamzin.report.service;
 
 import org.springframework.stereotype.Service;
 import ru.gamzin.report.model.SRab;
+import ru.gamzin.report.repository.LocalityGroupRepository;
 import ru.gamzin.report.repository.RvRepository;
 import ru.gamzin.report.repository.SRabRepository;
 import ru.gamzin.report.repository.SScolRepository;
@@ -18,13 +19,16 @@ public class PayrollReportService {
     private final SScolRepository scolRepository;
     private final SRabRepository rabRepository;
     private final RvRepository rvRepository;
+    private final LocalityGroupRepository localityGroupRepository;
 
     public PayrollReportService(SScolRepository scolRepository,
                                 SRabRepository rabRepository,
-                                RvRepository rvRepository) {
+                                RvRepository rvRepository,
+                                LocalityGroupRepository localityGroupRepository) {
         this.scolRepository = scolRepository;
         this.rabRepository = rabRepository;
         this.rvRepository = rvRepository;
+        this.localityGroupRepository = localityGroupRepository;
     }
 
     public static class ReportRow {
@@ -41,18 +45,22 @@ public class PayrollReportService {
         }
     }
 
-    /**
-     * Отчёт по точному номеру школы (NOM_SCOL), напр. "006".
-     */
+    public List<String> listLocalityNames() {
+        return localityGroupRepository.findDistinctLocalityNames();
+    }
+
     public List<ReportRow> buildReportBySchoolNumber(String nomScol, int year) {
         return buildReport(List.of(nomScol), year);
     }
 
-    /**
-     * Отчёт по "локации" (например "Новоникитино"), которая в S_SCOL
-     * размазана по нескольким кодам (школа/садик/ученики/советники и т.п.).
-     * keyword ищется по вхождению в NAIM_SCOL без учёта регистра.
-     */
+    public List<ReportRow> buildReportByLocalityGroup(String localityName, int year) {
+        List<String> codes = localityGroupRepository.findNomScolByLocalityName(localityName);
+        if (codes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return buildReport(codes, year);
+    }
+
     public List<ReportRow> buildReportByLocality(String keyword, int year) {
         List<String> codes = scolRepository.findScolCodesByNameContaining(keyword);
         if (codes.isEmpty()) {
@@ -78,9 +86,7 @@ public class PayrollReportService {
                         RvRepository.TabNomTotal::getTabNom,
                         RvRepository.TabNomTotal::getTotal));
 
-        // ФИО может повторяться в S_RAB (история должностей) — схлопываем по ФИО,
-        // суммируя начисления по всем его tab_nom.
-        Map<String, ReportRow> byFio = new java.util.TreeMap<>(); // TreeMap => сортировка А-Я по ключу (ФИО)
+        Map<String, ReportRow> byFio = new java.util.TreeMap<>();
         for (SRab e : employees) {
             BigDecimal sum = totalsByTabNom.getOrDefault(e.getTabNom(), BigDecimal.ZERO);
             byFio.merge(e.getFio(),

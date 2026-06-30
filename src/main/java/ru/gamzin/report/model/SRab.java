@@ -24,7 +24,6 @@ public class SRab {
     @Column(name = "tab_nom", length = 7, nullable = false)
     private String tabNom;
 
-    // первые 3 символа tab_nom — код школы, продублирован отдельной колонкой при загрузке
     @Column(name = "nom_scol", length = 3)
     private String nomScol;
 

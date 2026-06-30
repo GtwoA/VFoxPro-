@@ -23,8 +23,6 @@ public class KodRas {
     @Column(name = "kodzp", length = 5)
     private String kodzp;
 
-    // '0' — нерабочие/учётные показатели (дни работы, дни отпуска и т.п., не деньги)
-    // '1' — денежные начисления (оклад, категория и т.п.) — то, что идёт в отчёт
     @Column(name = "kod_tip", length = 2, nullable = false)
     private String kodTip;
 

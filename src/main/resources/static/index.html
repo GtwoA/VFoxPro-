@@ -29,6 +29,7 @@
             border: 1px solid #ccc;
             border-radius: 6px;
             font-size: 14px;
+            min-width: 220px;
         }
         button {
             padding: 9px 18px;
@@ -70,20 +71,30 @@
 <body>
 
 <h1>Отчёт по начислениям сотрудников</h1>
-<div class="sub">Выберите школу или населённый пункт и год — построится таблица и график по сумме начислений за год, по ФИО от А до Я.</div>
+<div class="sub">Выберите школу, организацию (группу кодов) или название для поиска и год — построится таблица и график по сумме начислений за год, по ФИО от А до Я.</div>
 
 <div class="form-row">
     <div class="field">
         <label>Тип поиска</label>
         <select id="mode">
+            <option value="locality-group">По организации (группа кодов школ)</option>
             <option value="school">По точному номеру школы (NOM_SCOL)</option>
-            <option value="locality">По названию/населённому пункту (например, Никитин)</option>
+            <option value="locality">По вхождению в название (запасной вариант)</option>
         </select>
     </div>
-    <div class="field">
+
+    <div class="field" id="localityGroupField">
+        <label>Организация</label>
+        <select id="localitySelect">
+            <option value="">— загрузка списка —</option>
+        </select>
+    </div>
+
+    <div class="field" id="valueField" style="display:none">
         <label id="valueLabel">Номер школы</label>
         <input id="value" type="text" placeholder="006" />
     </div>
+
     <div class="field">
         <label>Год</label>
         <input id="year" type="number" value="2024" style="width:90px" />
@@ -114,21 +125,59 @@
 <script>
     let chartInstance = null;
 
+    // подгружаем список организаций (locality_group) для выпадающего списка
+    async function loadLocalities() {
+        const select = document.getElementById('localitySelect');
+        try {
+            const res = await fetch('/api/localities');
+            const names = await res.json();
+            select.innerHTML = '';
+            if (names.length === 0) {
+                select.innerHTML = '<option value="">— группы не заведены —</option>';
+                return;
+            }
+            for (const name of names) {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                select.appendChild(opt);
+            }
+        } catch (e) {
+            select.innerHTML = '<option value="">— ошибка загрузки —</option>';
+        }
+    }
+    loadLocalities();
+
     document.getElementById('mode').addEventListener('change', (e) => {
+        const mode = e.target.value;
+        const groupField = document.getElementById('localityGroupField');
+        const valueField = document.getElementById('valueField');
         const label = document.getElementById('valueLabel');
         const input = document.getElementById('value');
-        if (e.target.value === 'locality') {
-            label.textContent = 'Ключевое слово в названии';
-            input.placeholder = 'Никитин';
+
+        if (mode === 'locality-group') {
+            groupField.style.display = '';
+            valueField.style.display = 'none';
         } else {
-            label.textContent = 'Номер школы';
-            input.placeholder = '006';
+            groupField.style.display = 'none';
+            valueField.style.display = '';
+            if (mode === 'locality') {
+                label.textContent = 'Ключевое слово в названии';
+                input.placeholder = 'Никитин';
+            } else {
+                label.textContent = 'Номер школы';
+                input.placeholder = '006';
+            }
         }
     });
+    // изначально показываем выпадающий список организаций
+    document.getElementById('mode').dispatchEvent(new Event('change'));
 
     function currentParams() {
         const mode = document.getElementById('mode').value;
-        const value = document.getElementById('value').value.trim();
+        const value = mode === 'locality-group'
+            ? document.getElementById('localitySelect').value
+            : document.getElementById('value').value.trim();
         const year = document.getElementById('year').value.trim();
         return { mode, value, year };
     }
@@ -226,9 +275,14 @@
             document.getElementById('status').textContent = 'Заполните поле поиска и год.';
             return;
         }
-        const url = mode === 'locality'
-            ? `/api/report/by-locality?keyword=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`
-            : `/api/report?nomScol=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`;
+        let url;
+        if (mode === 'locality-group') {
+            url = `/api/report/by-locality-group?locality=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`;
+        } else if (mode === 'locality') {
+            url = `/api/report/by-locality?keyword=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`;
+        } else {
+            url = `/api/report?nomScol=${encodeURIComponent(value)}&year=${encodeURIComponent(year)}`;
+        }
         window.location.href = url;
     }
 
